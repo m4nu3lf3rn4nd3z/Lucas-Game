@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Club World Cup Simulator 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        display: ['"Bebas Neue"', 'sans-serif'],
+                        sans: ['Outfit', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            navy: '#0a0e17',
+                            purple: '#2d0a31',
+                            neon: '#39ff14',
+                            gold: '#ffd700',
+                            dark: '#131b2f',
+                        }
+                    },
+                    animation: {
+                        'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'bounce-slight': 'bounce 2s infinite',
+                        'fade-in': 'fadeIn 0.5s ease-out forwards',
+                        'slide-up': 'slideUp 0.45s ease-out forwards',
+                        'score-pop': 'scorePop 0.35s ease-out',
+                        'glow': 'glow 2s ease-in-out infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: #0a0e17;
+            background-image:
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(57, 255, 20, 0.12), transparent),
+                radial-gradient(ellipse 60% 40% at 100% 100%, rgba(45, 10, 49, 0.8), transparent),
+                linear-gradient(135deg, #0a0e17 0%, #1a0a2e 50%, #0a0e17 100%);
+            background-attachment: fixed;
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0a0e17; }
+        ::-webkit-scrollbar-thumb { background: #39ff14; border-radius: 4px; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes scorePop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.35); color: #39ff14; }
+            100% { transform: scale(1); }
+        }
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 15px rgba(57, 255, 20, 0.35); }
+            50% { box-shadow: 0 0 28px rgba(57, 255, 20, 0.65); }
+        }
+        @keyframes fall {
+            to { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.35; }
+            50% { transform: translateY(-18px) rotate(180deg); opacity: 0.7; }
+        }
+
+        .confetti {
+            position: fixed;
+            font-size: 1.75rem;
+            animation: fall linear forwards;
+            pointer-events: none;
+            z-index: 100;
+        }
+        .particle {
+            position: fixed;
+            pointer-events: none;
+            animation: float 6s ease-in-out infinite;
+            opacity: 0.4;
+            z-index: 0;
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.04);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .player-team-glow {
+            animation: glow 2s ease-in-out infinite;
+            border-color: #39ff14 !important;
+        }
+        .winner-row {
+            background: rgba(57, 255, 20, 0.08);
+        }
+        .loser-row {
+            opacity: 0.55;
+        }
+        .screen-enter {
+            animation: fadeIn 0.4s ease-out;
+        }
+        .stat-bar {
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.08);
+            overflow: hidden;
+        }
+        .stat-fill {
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.8s ease-out;
+        }
+        .match-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .match-card:hover {
+            transform: translateY(-2px);
+        }
+        .match-card.just-played {
+            animation: slideUp 0.45s ease-out;
+        }
+        .score-pop { animation: scorePop 0.35s ease-out; }
+
+        .stage-dot.active { background: #39ff14; box-shadow: 0 0 10px #39ff14; }
+        .stage-dot.done { background: rgba(57,255,20,0.5); }
+        .stage-line.done { background: rgba(57,255,20,0.4); }
+
+        .feed-item { animation: slideUp 0.3s ease-out; }
+
+        @media (min-width: 768px) {
+            .bracket-grid {
+                background-image:
+                    linear-gradient(to right, transparent 31%, rgba(57,255,20,0.15) 31%, rgba(57,255,20,0.15) 31.5%, transparent 31.5%),
+                    linear-gradient(to right, transparent 65%, rgba(57,255,20,0.15) 65%, rgba(57,255,20,0.15) 65.5%, transparent 65.5%);
+            }
+        }
+    </style>
+</head>
+<body class="text-white font-sans min-h-screen flex flex-col items-center relative overflow-x-hidden">
+
+    <div id="particles" class="fixed inset-0 overflow-hidden pointer-events-none"></div>
+
+    <header class="fixed top-0 left-0 right-0 z-40 glass-panel border-b border-white/5 px-4 py-3 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <span class="text-2xl">⚽</span>
+            <span class="font-display text-xl tracking-wider text-brand-neon">CWC 2026</span>
+        </div>
+        <div id="careerStats" class="hidden text-xs md:text-sm text-gray-400 gap-4 flex">
+            <span>🏆 <strong id="statWins" class="text-brand-neon">0</strong> títulos</span>
+            <span>🎮 <strong id="statGames" class="text-white">0</strong> partidas</span>
+        </div>
+        <button id="btnSound" class="text-sm px-3 py-1 rounded-full border border-white/10 hover:border-brand-neon/50 transition" title="Sonido">🔊</button>
+    </header>
+
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-black/85 z-50 flex flex-col items-center justify-center backdrop-blur-md">
+        <div class="text-6xl animate-bounce-slight mb-4">⚽</div>
+        <h2 id="loadingText" class="font-display text-4xl tracking-wide text-brand-neon animate-pulse-fast">Simulando...</h2>
+        <div id="liveFeed" class="mt-8 w-full max-w-md px-6 space-y-2 max-h-48 overflow-y-auto"></div>
+    </div>
+
+    <div id="elimBanner" class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-40 glass-panel border border-red-500/40 px-6 py-3 rounded-2xl animate-slide-up">
+        <p class="text-red-400 font-bold text-sm md:text-base">💔 Eliminado — el torneo continúa</p>
+    </div>
+
+    <!-- PANTALLA 1: SORTEO -->
+    <section id="screen1" class="w-full max-w-4xl px-4 pt-24 pb-10 flex flex-col items-center text-center space-y-8 screen-enter z-10">
+        <div class="space-y-3">
+            <p class="text-brand-neon text-sm uppercase tracking-[0.3em] font-bold">FIFA Club World Cup</p>
+            <h1 class="font-display text-6xl md:text-8xl tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-brand-neon via-emerald-300 to-cyan-400">
+                CWC 2026
+            </h1>
+            <p class="text-lg text-gray-400 max-w-md mx-auto">Lanza el dado, recibe tu club y compite por la gloria mundial.</p>
+        </div>
+
+        <div id="drawSection" class="glass-panel p-8 md:p-10 rounded-3xl w-full max-w-lg flex flex-col items-center space-y-6">
+            <div id="diceSlot" class="relative w-full">
+                <div id="diceIcon" class="text-7xl md:text-8xl transition-transform">🎲</div>
+                <div id="slotTeamName" class="hidden font-display text-3xl md:text-4xl tracking-wide text-brand-neon mt-2 h-10"></div>
+            </div>
+
+            <div id="assignedTeamDisplay" class="hidden flex-col items-center space-y-4 w-full animate-slide-up">
+                <span class="text-brand-neon text-xs uppercase tracking-[0.25em] font-bold">Tu equipo asignado</span>
+                <div id="drawnTeamEmoji" class="text-6xl drop-shadow-lg"></div>
+                <h3 id="drawnTeamName" class="font-display text-4xl tracking-wide"></h3>
+                <p id="drawnTeamConf" class="text-gray-500 text-sm"></p>
+
+                <div class="w-full space-y-3 mt-2">
+                    <div>
+                        <div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Ataque</span><span id="drawnTeamAtkVal" class="text-brand-neon font-bold"></span></div>
+                        <div class="stat-bar"><div id="drawnTeamAtkBar" class="stat-fill bg-red-500" style="width:0%"></div></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Defensa</span><span id="drawnTeamDefVal" class="text-cyan-400 font-bold"></span></div>
+                        <div class="stat-bar"><div id="drawnTeamDefBar" class="stat-fill bg-cyan-500" style="width:0%"></div></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs mb-1"><span class="text-gray-400">Overall</span><span id="drawnTeamOvrVal" class="text-brand-gold font-bold"></span></div>
+                        <div class="stat-bar"><div id="drawnTeamOvrBar" class="stat-fill bg-brand-neon" style="width:0%"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <button id="btnRollDice" class="bg-brand-neon text-black font-bold text-lg px-8 py-4 rounded-full hover:bg-white hover:scale-105 transition-all duration-300 shadow-[0_0_24px_rgba(57,255,20,0.45)]">
+                🎲 Lanzar Dado y Asignar Equipo
+            </button>
+            <button id="btnGoTournament" class="hidden bg-white text-black font-bold text-lg px-8 py-4 rounded-full hover:bg-gray-100 hover:scale-105 transition-all duration-300">
+                Ir al Torneo 🏆
+            </button>
+        </div>
+
+        <div class="glass-panel rounded-2xl p-5 w-full max-w-lg">
+            <p class="text-xs uppercase tracking-widest text-gray-500 mb-3">Equipos participantes</p>
+            <div id="teamsPreview" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm"></div>
+        </div>
+    </section>
+
+    <!-- PANTALLA 2: TORNEO -->
+    <section id="screen2" class="w-full max-w-6xl px-4 pt-24 pb-10 flex-col items-center hidden z-10">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center w-full mb-6 gap-4">
+            <div>
+                <h2 class="font-display text-4xl tracking-wide border-l-4 border-brand-neon pl-4">Fase Final</h2>
+                <p id="nextMatchHint" class="text-sm text-gray-400 mt-2 pl-5"></p>
+            </div>
+            <div class="glass-panel px-5 py-2.5 rounded-full border border-brand-neon/30 player-team-glow flex items-center gap-3">
+                <span class="text-xs text-gray-400 uppercase tracking-wider">Tu club</span>
+                <span id="headerPlayerTeam" class="font-bold text-brand-neon"></span>
+            </div>
+        </div>
+
+        <div id="stageProgress" class="flex items-center justify-center gap-0 mb-8 w-full max-w-md">
+            <div class="flex flex-col items-center"><div class="stage-dot w-3 h-3 rounded-full bg-white/20" data-stage="qf"></div><span class="text-[10px] mt-1 text-gray-500">Cuartos</span></div>
+            <div class="stage-line flex-1 h-0.5 bg-white/10 mx-1"></div>
+            <div class="flex flex-col items-center"><div class="stage-dot w-3 h-3 rounded-full bg-white/20" data-stage="sf"></div><span class="text-[10px] mt-1 text-gray-500">Semis</span></div>
+            <div class="stage-line flex-1 h-0.5 bg-white/10 mx-1"></div>
+            <div class="flex flex-col items-center"><div class="stage-dot w-3 h-3 rounded-full bg-white/20" data-stage="final"></div><span class="text-[10px] mt-1 text-gray-500">Final</span></div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 w-full mb-8 bracket-grid">
+            <div class="flex flex-col space-y-3" id="col-qf">
+                <h3 class="text-center text-gray-500 font-bold uppercase tracking-widest text-xs">Cuartos de Final</h3>
+            </div>
+            <div class="flex flex-col justify-around space-y-3" id="col-sf">
+                <h3 class="text-center text-gray-500 font-bold uppercase tracking-widest text-xs">Semifinales</h3>
+            </div>
+            <div class="flex flex-col justify-center space-y-3" id="col-final">
+                <h3 class="text-center text-gray-500 font-bold uppercase tracking-widest text-xs">Gran Final</h3>
+            </div>
+        </div>
+
+        <div class="text-center">
+            <button id="btnSimulate" class="bg-brand-neon text-black font-bold text-lg md:text-xl px-10 py-4 rounded-full hover:bg-white hover:scale-105 transition-all duration-300 shadow-[0_0_24px_rgba(57,255,20,0.45)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100">
+                Simular Cuartos de Final
+            </button>
+            <p class="text-xs text-gray-500 mt-3">Los partidos se revelan uno a uno con comentarios en vivo</p>
+        </div>
+    </section>
+
+    <!-- PANTALLA 3: RESULTADOS -->
+    <section id="screen3" class="w-full max-w-2xl px-4 pt-24 pb-10 flex-col items-center hidden z-10">
+        <div class="glass-panel p-8 md:p-12 rounded-3xl w-full flex flex-col items-center space-y-6 relative overflow-hidden screen-enter">
+            <div id="finalStatusIcon" class="text-7xl md:text-8xl"></div>
+            <h1 id="finalStatusText" class="font-display text-5xl md:text-6xl uppercase tracking-wide text-center"></h1>
+            <p id="finalSubText" class="text-lg text-gray-400 text-center"></p>
+
+            <div class="bg-black/40 border border-white/10 rounded-2xl p-6 w-full">
+                <p class="text-xs text-gray-500 uppercase tracking-widest mb-3 text-center">Campeón del Mundo 2026</p>
+                <div class="flex flex-col items-center">
+                    <div id="championEmoji" class="text-6xl mb-1"></div>
+                    <h2 id="championName" class="font-display text-3xl text-brand-neon tracking-wide"></h2>
+                </div>
+            </div>
+
+            <div id="recapPanel" class="w-full grid grid-cols-2 gap-3 text-center text-sm"></div>
+
+            <button id="btnPlayAgain" class="mt-2 bg-white text-black font-bold text-lg px-8 py-4 rounded-full hover:bg-gray-100 hover:scale-105 transition-all">
+                Jugar de Nuevo 🔄
+            </button>
+        </div>
+    </section>
+
+    <script>
+        const TEAMS = [
+            { id: 1, name: "Real Madrid", emoji: "👑", conf: "España · UEFA", attack: 95, defense: 90, overall: 93 },
+            { id: 2, name: "Man City", emoji: "🦅", conf: "Inglaterra · UEFA", attack: 96, defense: 89, overall: 94 },
+            { id: 3, name: "Bayern Munich", emoji: "🔴", conf: "Alemania · UEFA", attack: 92, defense: 85, overall: 90 },
+            { id: 4, name: "Flamengo", emoji: "🦅", conf: "Brasil · CONMEBOL", attack: 82, defense: 75, overall: 79 },
+            { id: 5, name: "Atlético Madrid", emoji: "🔴⚪", conf: "España · UEFA", attack: 90, defense: 92, overall: 91 },
+            { id: 6, name: "Monterrey", emoji: "⚡", conf: "México · CONCACAF", attack: 78, defense: 74, overall: 76 },
+            { id: 7, name: "Urawa Reds", emoji: "🔺", conf: "Japón · AFC", attack: 74, defense: 72, overall: 73 },
+            { id: 8, name: "River Plate", emoji: "⚪🔴", conf: "Argentina · CONMEBOL", attack: 80, defense: 77, overall: 79 },
+        ];
+
+        const STAGE_LABELS = { qf: 'Cuartos', sf: 'Semifinales', final: 'Gran Final' };
+        const CAREER_KEY = 'cwc2026_career';
+
+        let playerTeam = null;
+        let playerEliminated = false;
+        let playerEliminatedRound = null;
+        let currentStage = 'qf';
+        let isSimulating = false;
+        let soundEnabled = true;
+        let tournamentData = { qf: [], sf: [], final: [], champion: null, history: [] };
+
+        const $ = (id) => document.getElementById(id);
+        const screens = { s1: $('screen1'), s2: $('screen2'), s3: $('screen3') };
+
+        // --- Audio ---
+        const audioCtx = typeof AudioContext !== 'undefined' ? new (window.AudioContext || window.webkitAudioContext)() : null;
+        function playTone(freq, dur = 0.08, type = 'sine', vol = 0.08) {
+            if (!soundEnabled || !audioCtx) return;
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            o.type = type;
+            o.frequency.value = freq;
+            g.gain.value = vol;
+            o.connect(g);
+            g.connect(audioCtx.destination);
+            o.start();
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+            o.stop(audioCtx.currentTime + dur);
+        }
+        function sfxGoal() { playTone(880, 0.12); setTimeout(() => playTone(1100, 0.15), 80); }
+        function sfxWin() { [523,659,784,1047].forEach((f,i) => setTimeout(() => playTone(f, 0.2, 'triangle', 0.1), i * 120)); }
+        function sfxLose() { playTone(220, 0.3, 'sawtooth', 0.06); }
+        function sfxDice() { playTone(400 + Math.random() * 200, 0.05, 'square', 0.04); }
+
+        $('btnSound').addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            $('btnSound').textContent = soundEnabled ? '🔊' : '🔇';
+            if (soundEnabled && audioCtx?.state === 'suspended') audioCtx.resume();
+        });
+
+        // --- Partículas de fondo ---
+        function initParticles() {
+            const container = $('particles');
+            const icons = ['⚽', '✦', '★'];
+            for (let i = 0; i < 18; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle text-brand-neon/30';
+                p.textContent = icons[i % 3];
+                p.style.left = Math.random() * 100 + 'vw';
+                p.style.top = Math.random() * 100 + 'vh';
+                p.style.fontSize = (0.6 + Math.random() * 1.2) + 'rem';
+                p.style.animationDelay = (Math.random() * 5) + 's';
+                p.style.animationDuration = (4 + Math.random() * 4) + 's';
+                container.appendChild(p);
+            }
+        }
+
+        // --- Carrera ---
+        function loadCareer() {
+            try {
+                return JSON.parse(localStorage.getItem(CAREER_KEY)) || { wins: 0, games: 0 };
+            } catch { return { wins: 0, games: 0 }; }
+        }
+        function saveCareer(c) { localStorage.setItem(CAREER_KEY, JSON.stringify(c)); }
+        function updateCareerUI() {
+            const c = loadCareer();
+            $('statWins').textContent = c.wins;
+            $('statGames').textContent = c.games;
+            $('careerStats').classList.remove('hidden');
+            $('careerStats').classList.add('flex');
+        }
+
+        // --- Utilidades ---
+        function shuffle(arr) {
+            const a = [...arr];
+            for (let i = a.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+        }
+        function showScreen(from, to) {
+            from.classList.add('hidden');
+            from.classList.remove('flex');
+            to.classList.remove('hidden');
+            to.classList.add('flex', 'screen-enter');
+        }
+        function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+        function teamById(id) { return TEAMS.find(t => t.id === id); }
+        function isPlayerInMatch(m) {
+            return m.home?.id === playerTeam?.id || m.away?.id === playerTeam?.id;
+        }
+
+        // --- Preview equipos ---
+        function renderTeamsPreview() {
+            $('teamsPreview').innerHTML = TEAMS.map(t =>
+                `<div class="glass-panel rounded-lg px-2 py-1.5 flex items-center gap-1.5">
+                    <span>${t.emoji}</span><span class="truncate text-gray-300">${t.name}</span>
+                    <span class="ml-auto text-brand-gold text-xs font-bold">${t.overall}</span>
+                </div>`
+            ).join('');
+        }
+
+        // --- Sorteo con slot machine ---
+        $('btnRollDice').addEventListener('click', async () => {
+            const btn = $('btnRollDice');
+            const icon = $('diceIcon');
+            const slot = $('slotTeamName');
+            btn.disabled = true;
+            icon.classList.add('animate-spin');
+            slot.classList.remove('hidden');
+
+            const spins = 18 + Math.floor(Math.random() * 10);
+            for (let i = 0; i < spins; i++) {
+                const t = TEAMS[Math.floor(Math.random() * TEAMS.length)];
+                slot.textContent = `${t.emoji} ${t.name}`;
+                sfxDice();
+                await delay(80 + i * 8);
+            }
+
+            playerTeam = TEAMS[Math.floor(Math.random() * TEAMS.length)];
+            icon.classList.remove('animate-spin');
+            slot.textContent = `${playerTeam.emoji} ${playerTeam.name}`;
+
+            await delay(400);
+            icon.classList.add('hidden');
+            slot.classList.add('hidden');
+
+            $('drawnTeamEmoji').textContent = playerTeam.emoji;
+            $('drawnTeamName').textContent = playerTeam.name;
+            $('drawnTeamConf').textContent = playerTeam.conf;
+            $('drawnTeamAtkVal').textContent = playerTeam.attack;
+            $('drawnTeamDefVal').textContent = playerTeam.defense;
+            $('drawnTeamOvrVal').textContent = playerTeam.overall;
+
+            $('assignedTeamDisplay').classList.remove('hidden');
+            $('assignedTeamDisplay').classList.add('flex');
+            $('btnGoTournament').classList.remove('hidden');
+            btn.classList.add('hidden');
+
+            requestAnimationFrame(() => {
+                $('drawnTeamAtkBar').style.width = playerTeam.attack + '%';
+                $('drawnTeamDefBar').style.width = playerTeam.defense + '%';
+                $('drawnTeamOvrBar').style.width = playerTeam.overall + '%';
+            });
+            playTone(660, 0.15, 'triangle', 0.1);
+        });
+
+        $('btnGoTournament').addEventListener('click', () => {
+            showScreen(screens.s1, screens.s2);
+            $('headerPlayerTeam').textContent = `${playerTeam.emoji} ${playerTeam.name}`;
+            initTournament();
+        });
+
+        // --- Torneo ---
+        function initTournament() {
+            playerEliminated = false;
+            playerEliminatedRound = null;
+            $('elimBanner').classList.add('hidden');
+            const shuffled = shuffle(TEAMS);
+            tournamentData = {
+                qf: [
+                    { home: shuffled[0], away: shuffled[1], played: false },
+                    { home: shuffled[2], away: shuffled[3], played: false },
+                    { home: shuffled[4], away: shuffled[5], played: false },
+                    { home: shuffled[6], away: shuffled[7], played: false },
+                ],
+                sf: [{ played: false }, { played: false }],
+                final: [{ played: false }],
+                champion: null,
+                history: [],
+            };
+            currentStage = 'qf';
+            updateStageProgress();
+            renderBracket();
+            updateNextMatchHint();
+        }
+
+        function updateStageProgress() {
+            const order = ['qf', 'sf', 'final'];
+            const idx = order.indexOf(currentStage === 'end' ? 'final' : currentStage);
+            document.querySelectorAll('.stage-dot').forEach(dot => {
+                const s = dot.dataset.stage;
+                const si = order.indexOf(s);
+                dot.classList.remove('active', 'done');
+                if (si < idx || currentStage === 'end') dot.classList.add('done');
+                else if (si === idx && currentStage !== 'end') dot.classList.add('active');
+            });
+            document.querySelectorAll('.stage-line').forEach((line, i) => {
+                line.classList.toggle('done', i < idx || currentStage === 'end');
+            });
+        }
+
+        function updateNextMatchHint() {
+            const hint = $('nextMatchHint');
+            if (currentStage === 'end') { hint.textContent = ''; return; }
+            const matches = tournamentData[currentStage];
+            const playerMatch = matches.find(m => !m.played && isPlayerInMatch(m));
+            if (playerMatch) {
+                const opp = playerMatch.home.id === playerTeam.id ? playerMatch.away : playerMatch.home;
+                hint.innerHTML = `⚔️ Tu próximo rival: <strong class="text-white">${opp.emoji} ${opp.name}</strong> (${STAGE_LABELS[currentStage]})`;
+            } else if (!playerEliminated) {
+                hint.textContent = 'Tu equipo avanza de ronda — observa los demás partidos';
+            } else {
+                hint.textContent = 'Ya estás eliminado. Sigue la simulación hasta la final.';
+            }
+        }
+
+        function buildMatchCard(match, highlight = false) {
+            const isHomePlayer = match.home?.id === playerTeam?.id;
+            const isAwayPlayer = match.away?.id === playerTeam?.id;
+            const isPlayer = isHomePlayer || isAwayPlayer;
+            const glow = isPlayer ? 'player-team-glow' : '';
+            const hl = highlight ? 'just-played' : '';
+
+            const homeWin = match.played && match.winner?.id === match.home?.id;
+            const awayWin = match.played && match.winner?.id === match.away?.id;
+
+            const scoreDisplay = (side, score) => {
+                if (!match.played) return '-';
+                if (match.isPenalty && side === 'home') return `${match.regScoreHome ?? score}`;
+                if (match.isPenalty && side === 'away') return `${match.regScoreAway ?? score}`;
+                return score;
+            };
+
+            let penBadge = '';
+            if (match.played && match.isPenalty) {
+                penBadge = `<div class="absolute -top-2 -right-2 bg-brand-neon text-black text-[10px] font-bold px-2 py-0.5 rounded-full">PEN ${match.penHome}-${match.penAway}</div>`;
+            }
+
+            return `<div class="match-card glass-panel rounded-xl p-3 flex flex-col gap-1.5 relative ${glow} ${hl}">
+                ${penBadge}
+                <div class="flex justify-between items-center py-0.5 rounded ${homeWin ? 'winner-row' : match.played && awayWin ? 'loser-row' : ''} ${isHomePlayer ? 'text-brand-neon font-bold' : 'text-gray-200'}">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span>${match.home?.emoji ?? '❓'}</span>
+                        <span class="truncate text-sm">${match.home?.name ?? 'Por definir'}</span>
+                        ${homeWin ? '<span class="text-brand-neon text-xs">✓</span>' : ''}
+                    </div>
+                    <span class="font-bold text-lg bg-black/50 px-2.5 py-0.5 rounded min-w-[2rem] text-center">${scoreDisplay('home', match.scoreHome)}</span>
+                </div>
+                <div class="border-t border-white/10"></div>
+                <div class="flex justify-between items-center py-0.5 rounded ${awayWin ? 'winner-row' : match.played && homeWin ? 'loser-row' : ''} ${isAwayPlayer ? 'text-brand-neon font-bold' : 'text-gray-200'}">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span>${match.away?.emoji ?? '❓'}</span>
+                        <span class="truncate text-sm">${match.away?.name ?? 'Por definir'}</span>
+                        ${awayWin ? '<span class="text-brand-neon text-xs">✓</span>' : ''}
+                    </div>
+                    <span class="font-bold text-lg bg-black/50 px-2.5 py-0.5 rounded min-w-[2rem] text-center">${scoreDisplay('away', match.scoreAway)}</span>
+                </div>
+            </div>`;
+        }
+
+        function renderBracket(highlightMatchIndex = -1) {
+            ['qf', 'sf', 'final'].forEach(stage => {
+                const col = $(`col-${stage}`);
+                const title = col.querySelector('h3');
+                col.innerHTML = '';
+                col.appendChild(title);
+                tournamentData[stage].forEach((match, i) => {
+                    const hl = stage === currentStage && i === highlightMatchIndex;
+                    col.innerHTML += buildMatchCard(match, hl);
+                });
+            });
+
+            const btn = $('btnSimulate');
+            if (currentStage === 'end') {
+                btn.classList.add('hidden');
+            } else {
+                btn.classList.remove('hidden');
+                btn.textContent = `Simular ${STAGE_LABELS[currentStage]}`;
+                btn.disabled = isSimulating;
+            }
+            updateNextMatchHint();
+        }
+
+        // --- Motor de partido ---
+        function generateGoalEvents(home, away, goalsH, goalsA) {
+            const events = [];
+            const minutes = () => Math.floor(Math.random() * 88) + 1;
+            for (let i = 0; i < goalsH; i++) events.push({ min: minutes(), team: home, type: 'goal' });
+            for (let i = 0; i < goalsA; i++) events.push({ min: minutes(), team: away, type: 'goal' });
+            events.sort((a, b) => a.min - b.min);
+            return events;
+        }
+
+        function calculateMatchResult(home, away) {
+            const rngH = Math.random() * 0.8 + 0.6;
+            const rngA = Math.random() * 0.8 + 0.6;
+            const homeAdv = 1.05;
+
+            let rawH = (home.attack / 20) * rngH * homeAdv - (away.defense / 35);
+            let rawA = (away.attack / 20) * rngA - (home.defense / 35);
+
+            let goalsH = Math.max(0, Math.round(rawH));
+            let goalsA = Math.max(0, Math.round(rawA));
+
+            if (goalsH + goalsA === 0 && Math.random() > 0.35) {
+                if (Math.random() > 0.5) goalsH = 1; else goalsA = 1;
+            }
+
+            const regScoreHome = goalsH;
+            const regScoreAway = goalsA;
+            let isPenalty = false;
+            let penHome = 0, penAway = 0;
+            let winner = null;
+
+            if (goalsH === goalsA) {
+                isPenalty = true;
+                penHome = 3 + Math.floor(Math.random() * 3);
+                penAway = 3 + Math.floor(Math.random() * 3);
+                while (penHome === penAway) {
+                    if (Math.random() > 0.5) penHome++; else penAway++;
+                }
+                winner = penHome > penAway ? home : away;
+            } else {
+                winner = goalsH > goalsA ? home : away;
+            }
+
+            const events = generateGoalEvents(home, away, regScoreHome, regScoreAway);
+
+            return {
+                scoreHome: isPenalty ? (penHome > penAway ? regScoreHome + 1 : regScoreHome) : goalsH,
+                scoreAway: isPenalty ? (penAway > penHome ? regScoreAway + 1 : regScoreAway) : goalsA,
+                regScoreHome, regScoreAway,
+                isPenalty, penHome, penAway, winner, events,
+            };
+        }
+
+        function addFeedLine(text, isGoal = false) {
+            const feed = $('liveFeed');
+            const line = document.createElement('p');
+            line.className = `feed-item text-sm ${isGoal ? 'text-brand-neon font-bold' : 'text-gray-300'}`;
+            line.textContent = text;
+            feed.appendChild(line);
+            feed.scrollTop = feed.scrollHeight;
+        }
+
+        function checkPlayerElimination(match, stage) {
+            if (!playerEliminated && isPlayerInMatch(match) && match.winner.id !== playerTeam.id) {
+                playerEliminated = true;
+                playerEliminatedRound = STAGE_LABELS[stage];
+                setTimeout(() => {
+                    $('elimBanner').classList.remove('hidden');
+                    sfxLose();
+                }, 600);
+            }
+        }
+
+        async function simulateMatchLive(match, stage, index) {
+            const home = match.home;
+            const away = match.away;
+            addFeedLine(`🏟️ ${home.name} vs ${away.name}`);
+
+            const result = calculateMatchResult(home, away);
+            let scoreH = 0, scoreA = 0;
+
+            for (const ev of result.events) {
+                await delay(350 + Math.random() * 250);
+                if (ev.team.id === home.id) scoreH++;
+                else scoreA++;
+                addFeedLine(`⚽ ${ev.min}' — ¡GOL de ${ev.team.name}! (${scoreH}-${scoreA})`, true);
+                sfxGoal();
+            }
+
+            if (result.isPenalty) {
+                await delay(500);
+                addFeedLine(`🎯 Empate ${result.regScoreHome}-${result.regScoreAway}. Tanda de penaltis...`);
+                await delay(800);
+                addFeedLine(`🎯 Penaltis: ${result.penHome}-${result.penAway} — Gana ${result.winner.name}`, true);
+            } else if (result.events.length === 0) {
+                await delay(400);
+                addFeedLine(`😶 Partido sin goles — ${result.winner.name} gana`);
+            }
+
+            await delay(300);
+            const finalTxt = result.isPenalty
+                ? `✅ Final: ${result.regScoreHome}-${result.regScoreAway} (${result.penHome}-${result.penAway} pen.) → ${result.winner.name}`
+                : `✅ Final: ${result.scoreHome}-${result.scoreAway} → ${result.winner.name}`;
+            addFeedLine(finalTxt);
+
+            Object.assign(match, {
+                scoreHome: result.scoreHome,
+                scoreAway: result.scoreAway,
+                regScoreHome: result.regScoreHome,
+                regScoreAway: result.regScoreAway,
+                isPenalty: result.isPenalty,
+                penHome: result.penHome,
+                penAway: result.penAway,
+                winner: result.winner,
+                played: true,
+            });
+
+            tournamentData.history.push({ stage, home, away, ...result });
+            checkPlayerElimination(match, stage);
+            renderBracket(index);
+
+            if (stage === 'qf') {
+                const sfIndex = Math.floor(index / 2);
+                if (index % 2 === 0) tournamentData.sf[sfIndex].home = match.winner;
+                else tournamentData.sf[sfIndex].away = match.winner;
+            } else if (stage === 'sf') {
+                if (index === 0) tournamentData.final[0].home = match.winner;
+                else tournamentData.final[0].away = match.winner;
+            } else if (stage === 'final') {
+                tournamentData.champion = match.winner;
+            }
+        }
+
+        $('btnSimulate').addEventListener('click', async () => {
+            if (isSimulating || currentStage === 'end') return;
+            isSimulating = true;
+            $('btnSimulate').disabled = true;
+
+            $('loadingOverlay').classList.remove('hidden');
+            $('liveFeed').innerHTML = '';
+            $('loadingText').textContent = `Simulando ${STAGE_LABELS[currentStage]}...`;
+
+            const matches = tournamentData[currentStage];
+            for (let i = 0; i < matches.length; i++) {
+                await simulateMatchLive(matches[i], currentStage, i);
+                await delay(400);
+            }
+
+            await delay(600);
+            $('loadingOverlay').classList.add('hidden');
+
+            if (currentStage === 'qf') currentStage = 'sf';
+            else if (currentStage === 'sf') currentStage = 'final';
+            else if (currentStage === 'final') currentStage = 'end';
+
+            updateStageProgress();
+            renderBracket();
+            isSimulating = false;
+            $('btnSimulate').disabled = false;
+
+            if (currentStage === 'end') {
+                await delay(1200);
+                showFinalScreen();
+            }
+        });
+
+        // --- Pantalla final ---
+        function getPlayerStats() {
+            let goalsFor = 0, goalsAgainst = 0, matchesPlayed = 0;
+            for (const h of tournamentData.history) {
+                const isHome = h.home.id === playerTeam.id;
+                const isAway = h.away.id === playerTeam.id;
+                if (!isHome && !isAway) continue;
+                matchesPlayed++;
+                if (isHome) {
+                    goalsFor += h.regScoreHome ?? h.scoreHome;
+                    goalsAgainst += h.regScoreAway ?? h.scoreAway;
+                } else {
+                    goalsFor += h.regScoreAway ?? h.scoreAway;
+                    goalsAgainst += h.regScoreHome ?? h.scoreHome;
+                }
+            }
+            return { goalsFor, goalsAgainst, matchesPlayed };
+        }
+
+        function showFinalScreen() {
+            showScreen(screens.s2, screens.s3);
+
+            const isChampion = playerTeam.id === tournamentData.champion.id;
+            const stats = getPlayerStats();
+            const career = loadCareer();
+            career.games++;
+            if (isChampion) career.wins++;
+            saveCareer(career);
+            updateCareerUI();
+
+            if (isChampion) {
+                $('finalStatusIcon').textContent = '🏆';
+                $('finalStatusText').textContent = '¡Campeones del Mundo!';
+                $('finalStatusText').className = 'font-display text-5xl md:text-6xl uppercase tracking-wide text-center text-brand-neon';
+                $('finalSubText').textContent = `Has llevado al ${playerTeam.name} a la gloria absoluta en el CWC 2026.`;
+                fireConfetti();
+                sfxWin();
+            } else {
+                $('finalStatusIcon').textContent = playerEliminated ? '💔' : '🥈';
+                $('finalStatusText').textContent = playerEliminated ? 'Fin del Sueño' : 'Casi lo logras';
+                $('finalStatusText').className = 'font-display text-5xl md:text-6xl uppercase tracking-wide text-center text-red-400';
+                $('finalSubText').textContent = playerEliminated
+                    ? `Eliminado en ${playerEliminatedRound}. ${tournamentData.champion.name} se alzó con el título.`
+                    : `Llegaste a la final pero ${tournamentData.champion.name} fue superior.`;
+                sfxLose();
+            }
+
+            $('championEmoji').textContent = tournamentData.champion.emoji;
+            $('championName').textContent = tournamentData.champion.name;
+
+            $('recapPanel').innerHTML = `
+                <div class="glass-panel rounded-xl p-3"><p class="text-gray-500 text-xs">Partidos</p><p class="text-xl font-bold">${stats.matchesPlayed}</p></div>
+                <div class="glass-panel rounded-xl p-3"><p class="text-gray-500 text-xs">Goles a favor</p><p class="text-xl font-bold text-brand-neon">${stats.goalsFor}</p></div>
+                <div class="glass-panel rounded-xl p-3"><p class="text-gray-500 text-xs">Goles en contra</p><p class="text-xl font-bold text-red-400">${stats.goalsAgainst}</p></div>
+                <div class="glass-panel rounded-xl p-3"><p class="text-gray-500 text-xs">Tu OVR</p><p class="text-xl font-bold text-brand-gold">${playerTeam.overall}</p></div>
+            `;
+        }
+
+        function fireConfetti() {
+            const emojis = ['🏆', '⚽', '✨', '🎉', '🎊', '💚', '⭐'];
+            for (let i = 0; i < 60; i++) {
+                const c = document.createElement('div');
+                c.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+                c.className = 'confetti';
+                c.style.left = Math.random() * 100 + 'vw';
+                c.style.top = '-5vh';
+                c.style.animationDuration = (2 + Math.random() * 3) + 's';
+                document.body.appendChild(c);
+                setTimeout(() => c.remove(), 5500);
+            }
+        }
+
+        $('btnPlayAgain').addEventListener('click', () => {
+            playerTeam = null;
+            playerEliminated = false;
+            currentStage = 'qf';
+            isSimulating = false;
+
+            $('btnRollDice').classList.remove('hidden');
+            $('btnRollDice').disabled = false;
+            $('diceIcon').classList.remove('hidden', 'animate-spin');
+            $('slotTeamName').classList.add('hidden');
+            $('assignedTeamDisplay').classList.add('hidden');
+            $('assignedTeamDisplay').classList.remove('flex');
+            $('btnGoTournament').classList.add('hidden');
+            $('elimBanner').classList.add('hidden');
+
+            ['drawnTeamAtkBar', 'drawnTeamDefBar', 'drawnTeamOvrBar'].forEach(id => $(id).style.width = '0%');
+
+            showScreen(screens.s3, screens.s1);
+        });
+
+        // --- Init ---
+        initParticles();
+        renderTeamsPreview();
+        updateCareerUI();
+    </script>
+</body>
+</html>
