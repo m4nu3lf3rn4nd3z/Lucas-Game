@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backrooms Survival 🎮</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0810;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+    }
+    #wrap { position: relative; box-shadow: 0 0 40px rgba(255, 220, 60, 0.15); border-radius: 8px; overflow: hidden; }
+    canvas { display: block; cursor: default; }
+    #hint {
+      color: #888;
+      font-size: 13px;
+      margin-top: 10px;
+      text-align: center;
+      max-width: 960px;
+      padding: 0 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="960" height="640"></canvas>
+  </div>
+  <p id="hint">WASD o flechas para mover · Clic en botones · ESC pausa · M silencio</p>
+  <script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  const HUD_H = 48, CELL = 40, PLAYER_R = 0.30;
+  const VIEW_W = W, VIEW_H = H - HUD_H;
+  const SAVE_KEY = "backrooms_web_v1";
+  const START_COINS = 10, WIN_COINS = 10;
+
+  const STATE = { INTRO:0, MENU:1, SHOP:2, PLAY:3, DICE:4, PAUSE:5, WIN:6, OVER:7 };
+
+  const SKINS = [
+    { id:"default", name:"Explorador", price:0, body:"#dcb996", clothes:"#50a0ff", accent:"#3264b4", emoji:"🧭", desc:"Tu héroe azul listo para la aventura." },
+    { id:"hazmat", name:"Traje Hazmat", price:15, body:"#dcb996", clothes:"#e6c828", accent:"#282828", emoji:"🟡", desc:"Traje amarillo anti-monstruos." },
+    { id:"office", name:"Oficinista", price:10, body:"#d2af8c", clothes:"#787d87", accent:"#c8b496", emoji:"👔", desc:"Perdido entre carpetas y pasillos." },
+    { id:"entity", name:"Camuflado", price:25, body:"#b4aa82", clothes:"#5a6e46", accent:"#3c3228", emoji:"🌿", desc:"Casi invisible en las paredes." },
+    { id:"king", name:"Rey Backrooms", price:50, body:"#dcb996", clothes:"#b48c28", accent:"#ffdc50", emoji:"👑", desc:"¡El skin más épico del juego!" },
+  ];
+
+  let state = STATE.INTRO;
+  let save = loadSave();
+  let buttons = [];
+  let level = 1, chaseMult = 1;
+  let maze = null, player = null, monsters = [];
+  let camX = 0, camY = 0;
+  let introT = 0, pulseT = 0, flickerA = 0, flickerT = 0;
+  let shopMsg = "", shopMsgT = 0;
+  let dice = { phase:0, timer:0, display:1, final:0, result:null, accum:0 };
+  let endT = 0, blood = [], confetti = [];
+  let muted = save.muted;
+  let audioCtx = null;
+  let droneNodes = null;
+  let mouse = { x:0, y:0 };
+
+  // ── Persistencia ──
+  function loadSave() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || "{}");
+      return {
+        coins: raw.coins ?? START_COINS,
+        owned: raw.owned ?? ["default"],
+        equipped: raw.equipped ?? "default",
+        muted: raw.muted ?? false,
+      };
+    } catch { return { coins:START_COINS, owned:["default"], equipped:"default", muted:false }; }
+  }
+  function persist() {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      coins: save.coins, owned: save.owned, equipped: save.equipped, muted: save.muted
+    }));
+  }
+  function getSkin(id) { return SKINS.find(s => s.id === id) || SKINS[0]; }
+
+  // ── Audio simple (Web Audio) ──
+  function ensureAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+  function beep(freq, dur, vol=0.15, type="square") {
+    if (muted || !audioCtx) return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  }
+  function sfx(name) {
+    ensureAudio();
+    const map = {
+      coin: () => { beep(880,.08,.12); setTimeout(()=>beep(1200,.1,.1),80); },
+      step: () => beep(120,.03,.04,"sine"),
+      hit:  () => { beep(80,.3,.2,"sawtooth"); },
+      dice: () => beep(440,.05,.1),
+      win:  () => { [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.15,.12,"sine"),i*120)); },
+      lose: () => { beep(110,.5,.2,"sawtooth"); },
+      buy:  () => { beep(660,.1,.12); beep(990,.15,.1); },
+    };
+    (map[name]||(()=>{}))();
+  }
+
+  function startHorrorDrone() {
+    if (muted || !audioCtx || droneNodes) return;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.06;
+    g.connect(audioCtx.destination);
+    [55, 58, 110].forEach((f, i) => {
+      const o = audioCtx.createOscillator();
+      o.type = i === 2 ? "triangle" : "sine";
+      o.frequency.value = f;
+      o.connect(g);
+      o.start();
+    });
+    droneNodes = g;
+  }
+
+  function stopHorrorDrone() {
+    if (droneNodes) {
+      try { droneNodes.disconnect(); } catch {}
+      droneNodes = null;
+    }
+  }
+
+    // ── Laberinto ──
+  class Maze {
+    constructor(cols, rows) {
+      this.cols = cols | 1; this.rows = rows | 1;
+      this.grid = Array.from({length:this.rows}, () => Array(this.cols).fill(1));
+      this._carve(1, 1);
+      this.start = [1, 1];
+      this.exit = [this.cols - 2, this.rows - 2];
+      this.grid[this.exit[1]][this.exit[0]] = 0;
+    }
+    _carve(x, y) {
+      this.grid[y][x] = 0;
+      const dirs = [[0,-2],[0,2],[-2,0],[2,0]].sort(() => Math.random() - 0.5);
+      for (const [dx,dy] of dirs) {
+        const nx = x+dx, ny = y+dy;
+        if (nx>0 && ny>0 && nx<this.cols-1 && ny<this.rows-1 && this.grid[ny][nx]===1) {
+          this.grid[y+dy/2][x+dx/2] = 0;
+          this._carve(nx, ny);
+        }
+      }
+    }
+    walkable(gx, gy) {
+      const x = Math.floor(gx), y = Math.floor(gy);
+      if (x<0||y<0||x>=this.cols||y>=this.rows) return false;
+      return this.grid[y][x] === 0;
+    }
+    expand() {
+      const old = this.grid, oc = this.cols, or = this.rows;
+      this.cols += 4; this.rows += 4;
+      this.grid = Array.from({length:this.rows}, () => Array(this.cols).fill(1));
+      for (let y=0; y<or; y++) for (let x=0; x<oc; x++) this.grid[y+2][x+2] = old[y][x];
+      for (let i=0; i<8; i++) {
+        const sx = 1 + Math.floor(Math.random()*((this.cols-2)/2))*2;
+        const sy = 1 + Math.floor(Math.random()*((this.rows-2)/2))*2;
+        if (this.grid[sy][sx]===1) { this._carve(sx,sy); break; }
+      }
+      this.start = [this.start[0]+2, this.start[1]+2];
+      this.exit = [this.exit[0]+2, this.exit[1]+2];
+      this.grid[this.exit[1]][this.exit[0]] = 0;
+    }
+    randomFloor() {
+      const cells = [];
+      for (let y=0;y<this.rows;y++) for (let x=0;x<this.cols;x++)
+        if (this.grid[y][x]===0) cells.push([x,y]);
+      return cells[Math.floor(Math.random()*cells.length)] || this.start;
+    }
+  }
+
+  function hitsWall(m, x, y) {
+    const pts = [[x,y],[x-PLAYER_R,y],[x+PLAYER_R,y],[x,y-PLAYER_R],[x,y+PLAYER_R]];
+    for (let i=0;i<8;i++) {
+      const a = 2*Math.PI*i/8;
+      pts.push([x+Math.cos(a)*PLAYER_R, y+Math.sin(a)*PLAYER_R]);
+    }
+    return pts.some(([px,py]) => !m.walkable(px, py));
+  }
+
+  function moveEnt(m, ent, dx, dy, dt) {
+    if (!dx && !dy) return;
+    const len = Math.hypot(dx,dy)||1;
+    dx/=len; dy/=len;
+    const step = ent.speed * dt;
+    const nx = ent.x + dx*step;
+    if (!hitsWall(m, nx, ent.y)) ent.x = nx;
+    const ny = ent.y + dy*step;
+    if (!hitsWall(m, ent.x, ny)) ent.y = ny;
+  }
+
+  function gridPixel(gx, gy) { return [gx*CELL, gy*CELL]; }
+
+  // ── Dibujo personajes ──
+  function drawAvatar(c, x, y, skin, scale=1, monster=false) {
+    c.save();
+    c.translate(x, y);
+    c.scale(scale, scale);
+    if (monster) {
+      c.fillStyle = "#c82828"; c.beginPath(); c.arc(0,-4,14,0,Math.PI*2); c.fill();
+      c.fillStyle = "#500"; c.arc(-5,-6,4,0,Math.PI*2); c.arc(5,-6,4,0,Math.PI*2);
+      c.fillStyle = "#fff"; c.arc(-5,-6,2,0,Math.PI*2); c.arc(5,-6,2,0,Math.PI*2);
+      c.fillStyle = "#300"; c.fillRect(-8,6,16,4);
+      c.restore(); return;
+    }
+    c.fillStyle = "rgba(0,0,0,0.25)";
+    c.beginPath(); c.ellipse(0,18,12,4,0,0,Math.PI*2); c.fill();
+    c.fillStyle = "#323028";
+    c.fillRect(-7,6,5,12); c.fillRect(2,6,5,12);
+    c.fillStyle = skin.clothes;
+    roundRect(c,-10,-8,20,18,4); c.fill();
+    c.fillStyle = skin.body;
+    c.fillRect(-12,-6,5,11); c.fillRect(7,-6,5,11);
+    c.beginPath(); c.arc(0,-16,9,0,Math.PI*2); c.fill();
+    c.fillStyle = skin.accent;
+    if (skin.id==="hazmat") {
+      c.fillRect(-7,-22,14,6); c.fillStyle="#282828"; c.fillRect(-5,-16,10,3);
+    } else if (skin.id==="office") {
+      c.fillStyle="#c8b496"; c.fillRect(-3,-4,6,8);
+    } else if (skin.id==="entity") {
+      c.strokeStyle="#5a6e46"; c.lineWidth=2;
+      c.beginPath(); c.moveTo(-8,-20); c.lineTo(8,-14); c.stroke();
+    } else if (skin.id==="king") {
+      c.beginPath();
+      c.moveTo(-10,-22); c.lineTo(-5,-30); c.lineTo(0,-24); c.lineTo(5,-30); c.lineTo(10,-22);
+      c.closePath(); c.fill();
+    } else {
+      c.fillStyle="#283040"; c.arc(-3,-17,2,0,Math.PI*2); c.arc(3,-17,2,0,Math.PI*2);
+    }
+    c.font = "16px serif"; c.textAlign="center"; c.textBaseline="middle";
+    c.fillText(skin.emoji, 0, -28);
+    c.restore();
+  }
+
+  function roundRect(c,x,y,w,h,r) {
+    c.beginPath();
+    c.moveTo(x+r,y); c.lineTo(x+w-r,y); c.quadraticCurveTo(x+w,y,x+w,y+r);
+    c.lineTo(x+w,y+h-r); c.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    c.lineTo(x+r,y+h); c.quadraticCurveTo(x,y+h,x,y+h-r);
+    c.lineTo(x,y+r); c.quadraticCurveTo(x,y,x+r,y); c.closePath();
+  }
+
+  function drawText(text, x, y, size, color, align="left") {
+    ctx.font = `bold ${size}px Segoe UI, sans-serif`;
+    ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "top";
+    ctx.fillText(text, x, y);
+  }
+
+  function wrapText(text, x, y, maxW, size, color) {
+    ctx.font = `bold ${size}px Segoe UI, sans-serif`;
+    ctx.fillStyle = color; ctx.textAlign = "center";
+    const words = text.split(" ");
+    let line = "", ly = y;
+    for (const w of words) {
+      const test = line + w + " ";
+      if (ctx.measureText(test).width > maxW && line) {
+        ctx.fillText(line.trim(), x, ly); line = w + " "; ly += size + 4;
+      } else line = test;
+    }
+    ctx.fillText(line.trim(), x, ly);
+  }
+
+  function btn(x,y,w,h,label,cb,fs=28) {
+    return { x,y,w,h,label,cb,fs, hover:false };
+  }
+  function hitBtn(b, mx, my) { return mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h; }
+
+  // ── Estados ──
+  function goMenu() {
+    state = STATE.MENU;
+    startHorrorDrone();
+    buttons = [
+      btn(W/2-150, 340, 300, 54, "▶  JUGAR", startGame, 30),
+      btn(W/2-150, 410, 300, 54, "🛒  TIENDA DE SKINS", openShop, 28),
+      btn(W/2-150, 480, 300, 54, "✖  SALIR", () => alert("¡Gracias por jugar! Recarga la página para volver."), 26),
+    ];
+  }
+
+  function startGame() {
+    ensureAudio();
+    stopHorrorDrone();
+    level = 1; chaseMult = 1;
+    initMaze();
+    state = STATE.PLAY;
+    buttons = [];
+    confetti = [];
+  }
+
+  function initMaze() {
+    const base = 11 + level*2;
+    maze = new Maze(base, base-2);
+    player = { x: maze.start[0]+0.5, y: maze.start[1]+0.5, speed: 3.8, stepT: 0 };
+    monsters = [];
+    for (let i=0;i<2;i++) {
+      let [mx,my] = maze.randomFloor();
+      while (Math.hypot(mx+0.5-player.x, my+0.5-player.y) < 5) [mx,my] = maze.randomFloor();
+      monsters.push({ x:mx+0.5, y:my+0.5, speed:2+level*0.15, wanderT:0, dir:[1,0] });
+    }
+  }
+
+  function openShop() {
+    ensureAudio();
+    state = STATE.SHOP;
+    shopMsg = "";
+    buttons = [btn(24, H-56, 160, 44, "← VOLVER", goMenu, 22)];
+  }
+
+  function buyOrEquip(skin) {
+    if (save.owned.includes(skin.id)) {
+      save.equipped = skin.id;
+      shopMsg = `✅ Equipaste: ${skin.name} ${skin.emoji}`;
+      sfx("buy");
+    } else if (save.coins >= skin.price) {
+      save.coins -= skin.price;
+      save.owned.push(skin.id);
+      save.equipped = skin.id;
+      shopMsg = `🎉 ¡Compraste ${skin.name}! Ya lo llevas puesto.`;
+      sfx("buy");
+    } else {
+      shopMsg = `😅 Te faltan ${skin.price - save.coins} monedas.`;
+    }
+    persist();
+    shopMsgT = 3;
+  }
+
+  function rollDice() {
+    const v = 1 + Math.floor(Math.random()*6);
+    if (v <= 2) return { v, ok:false };
+    if (v <= 4) return { v, ok: Math.random() < 0.5 };
+    return { v, ok:true };
+  }
+
+  function startDice() {
+    state = STATE.DICE;
+    const r = rollDice();
+    dice = { phase:0, timer:0, display:1, final:r.v, result:r.ok, accum:0 };
+    sfx("hit");
+  }
+
+  function resolveDice() {
+    if (!dice.result) { triggerOver(); return; }
+    level++; chaseMult += 0.12;
+    player.x += 2; player.y += 2;
+    maze.expand();
+    monsters.forEach(m => {
+      const [mx,my] = maze.randomFloor();
+      m.x = mx+0.5; m.y = my+0.5;
+    });
+    spawnConfetti(W/2, H/2, 30);
+    shopMsg = "¡Escapaste! El laberinto crece...";
+    state = STATE.PLAY;
+  }
+
+  function triggerWin() {
+    save.coins += WIN_COINS;
+    persist();
+    state = STATE.WIN;
+    endT = 0;
+    sfx("win");
+    spawnConfetti(W/2, H/2, 80);
+    buttons = [btn(W/2-150, 480, 300, 50, "🏠 MENÚ", goMenu, 26)];
+  }
+
+  function triggerOver() {
+    state = STATE.OVER;
+    endT = 0;
+    sfx("lose");
+    blood = Array.from({length:60}, () => ({
+      x: Math.random()*W, y: Math.random()*-50, vy: 2+Math.random()*5
+    }));
+    buttons = [
+      btn(W/2-150, 510, 300, 48, "🔄 REINTENTAR", startGame, 24),
+      btn(W/2-150, 570, 300, 48, "🏠 MENÚ", goMenu, 24),
+    ];
+  }
+
+  function spawnConfetti(x,y,n) {
+    const cols = ["#ffdc50","#50ff90","#50a0ff","#ff50a0","#ff9050"];
+    for (let i=0;i<n;i++) confetti.push({
+      x, y, vx:(Math.random()-0.5)*8, vy:-2-Math.random()*6,
+      c: cols[i%cols.length], life: 2+Math.random()*2
+    });
+  }
+
+  // ── Input ──
+  const keys = {};
+  window.addEventListener("keydown", e => {
+    keys[e.code] = true;
+    if (e.code==="KeyM") { muted=!muted; save.muted=muted; persist(); if(muted) stopHorrorDrone(); else if(state===STATE.MENU||state===STATE.SHOP||state===STATE.INTRO) startHorrorDrone(); }
+    if (e.code==="Escape") {
+      if (state===STATE.PLAY) {
+        state=STATE.PAUSE;
+        buttons=[
+          btn(W/2-150,260,300,48,"▶ CONTINUAR",()=>{state=STATE.PLAY;buttons=[];},24),
+          btn(W/2-150,330,300,48,"🏠 MENÚ",goMenu,24),
+        ];
+      } else if (state===STATE.PAUSE) { state=STATE.PLAY; buttons=[]; }
+    }
+    if (state===STATE.INTRO) { state=STATE.MENU; goMenu(); ensureAudio(); startHorrorDrone(); }
+  });
+  window.addEventListener("keyup", e => keys[e.code]=false);
+  canvas.addEventListener("mousemove", e => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = (e.clientX-r.left)*(W/r.width);
+    mouse.y = (e.clientY-r.top)*(H/r.height);
+    buttons.forEach(b => b.hover = hitBtn(b, mouse.x, mouse.y));
+  });
+  canvas.addEventListener("click", e => {
+    ensureAudio();
+    const r = canvas.getBoundingClientRect();
+    const mx = (e.clientX-r.left)*(W/r.width), my = (e.clientY-r.top)*(H/r.height);
+    if (state===STATE.INTRO) { goMenu(); return; }
+      if (state===STATE.SHOP) {
+      const shopSkins = SKINS.filter(s => s.id !== "default");
+      const cardW=200, gap=16, defaultW=150;
+      const startX = defaultW + 40;
+      for (let i=0; i<shopSkins.length; i++) {
+        const cx = startX + i*(cardW+gap), cy = 120;
+        if (mx>=cx && mx<=cx+cardW && my>=cy && my<=cy+300) { buyOrEquip(shopSkins[i]); return; }
+      }
+      if (mx>=24 && mx<=174 && my>=120 && my<=420) { buyOrEquip(SKINS[0]); return; }
+    }
+    for (const b of buttons) if (hitBtn(b,mx,my)) { b.cb(); return; }
+  });
+
+  // ── Update ──
+  let last = performance.now();
+  function update(dt) {
+    introT += dt;
+    pulseT += dt;
+    if (shopMsgT>0) shopMsgT -= dt;
+
+    confetti.forEach(p => { p.x+=p.vx; p.y+=p.vy; p.vy+=0.2; p.life-=dt; });
+    confetti = confetti.filter(p => p.life>0);
+
+    if (state===STATE.PLAY) {
+      let dx=0, dy=0;
+      if (keys.ArrowLeft||keys.KeyA) dx--;
+      if (keys.ArrowRight||keys.KeyD) dx++;
+      if (keys.ArrowUp||keys.KeyW) dy--;
+      if (keys.ArrowDown||keys.KeyS) dy++;
+      if (dx||dy) {
+        moveEnt(maze, player, dx, dy, dt);
+        player.stepT += dt;
+        if (player.stepT > 0.25) { player.stepT=0; sfx("step"); }
+      }
+      monsters.forEach(m => {
+        const dist = Math.hypot(player.x-m.x, player.y-m.y);
+        if (dist < 8) {
+          const spd = m.speed * chaseMult;
+          const len = Math.hypot(player.x-m.x, player.y-m.y) || 1;
+          const nx = m.x + (player.x-m.x)/len * spd * dt;
+          const ny = m.y + (player.y-m.y)/len * spd * dt;
+          if (!hitsWall(maze, nx, m.y)) m.x = nx;
+          if (!hitsWall(maze, m.x, ny)) m.y = ny;
+        } else {
+          m.wanderT -= dt;
+          if (m.wanderT<=0) {
+            m.dir = [[1,0],[-1,0],[0,1],[0,-1]][Math.floor(Math.random()*4)];
+            m.wanderT = 0.8+Math.random()*1.5;
+          }
+          moveEnt(maze, m, m.dir[0], m.dir[1], dt*0.5);
+        }
+      });
+      const px = player.x*CELL, py = player.y*CELL;
+      const mw = maze.cols*CELL, mh = maze.rows*CELL;
+      camX = Math.max(0, Math.min(px-VIEW_W/2, Math.max(0,mw-VIEW_W)));
+      camY = Math.max(0, Math.min(py-VIEW_H/2, Math.max(0,mh-VIEW_H)));
+      flickerT += dt;
+      if (flickerT > 4+Math.random()*4) { flickerT=0; flickerA=60+Math.random()*40; }
+      else if (flickerA>0) flickerA = Math.max(0, flickerA-dt*100);
+
+      monsters.forEach(m => {
+        if (Math.hypot(player.x-m.x, player.y-m.y) < 0.55) startDice();
+      });
+      const [ex,ey] = maze.exit;
+      if (Math.abs(player.x-(ex+0.5))<0.4 && Math.abs(player.y-(ey+0.5))<0.4) triggerWin();
+    }
+
+    if (state===STATE.DICE) {
+      dice.timer += dt;
+      if (dice.phase===0 && dice.timer>=1) { dice.phase=1; dice.timer=0; }
+      else if (dice.phase===1) {
+        dice.accum += dt;
+        if (dice.accum > Math.max(0.04, 0.1-dice.timer*0.03)) {
+          dice.accum=0;
+          dice.display = dice.timer>=1.5 ? dice.final : 1+Math.floor(Math.random()*6);
+          if (dice.timer<1.5) sfx("dice");
+        }
+        if (dice.timer>=2.2) { dice.phase=2; dice.display=dice.final; dice.timer=0; }
+      } else if (dice.phase===2 && dice.timer>=1.2) resolveDice();
+    }
+
+    if (state===STATE.OVER) {
+      endT += dt;
+      blood.forEach(b => b.y += b.vy);
+    }
+  }
+
+  // ── Draw helpers ──
+  function drawIntro() {
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,"#1e1810"); g.addColorStop(1,"#3c3220");
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    for (let i=0;i<40;i++) {
+      ctx.fillStyle=`rgba(200,185,120,${0.08+Math.random()*0.08})`;
+      ctx.fillRect(Math.random()*W, Math.random()*H, 40+Math.random()*120, 8+Math.random()*12);
+    }
+    const pulse = 0.85+0.15*Math.sin(introT*3);
+    ctx.font = `bold ${Math.floor(88*pulse)}px Impact, sans-serif`;
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillStyle="rgba(40,30,0,0.6)"; ctx.fillText("BACKROOMS", W/2+4, H/2-16);
+    ctx.fillStyle="#ffdc28"; ctx.fillText("BACKROOMS", W/2, H/2-20);
+    drawText("SURVIVAL", W/2-ctx.measureText("BACKROOMS").width/2+ctx.measureText("BACKROOMS").width/2, H/2+40, 24, "#b4a080", "center");
+    ctx.textAlign="center";
+    drawText("¡Escapa del laberinto y compra skins geniales!", W/2, H/2+80, 20, "#c8b890", "center");
+    if (introT>0.8) drawText("Pulsa cualquier tecla o clic para empezar", W/2, H-50, 18, "#888", "center");
+  }
+
+  function drawMenu() {
+    drawIntro();
+    ctx.fillStyle="rgba(0,0,0,0.55)"; ctx.fillRect(0,240,W,380);
+    drawText(`🪙 Monedas: ${save.coins}`, W/2, 280, 26, "#ffdc50", "center");
+    const eq = getSkin(save.equipped);
+    drawText(`Avatar actual: ${eq.emoji} ${eq.name}`, W/2, 312, 18, "#e8dcc8", "center");
+    drawButtons();
+    drawText(muted?"🔇 Sonido OFF (M)":"🔊 Sonido ON (M)", W/2, 555, 14, "#888", "center");
+  }
+
+  function drawShop() {
+    ctx.fillStyle="#12101a"; ctx.fillRect(0,0,W,H);
+    drawText("🛒 TIENDA DE SKINS", W/2, 28, 36, "#ffdc50", "center");
+    drawText(`🪙 ${save.coins} monedas`, W-20, 20, 22, "#ffdc50", "right");
+
+    const eq = getSkin(save.equipped);
+    drawText(`Llevas puesto: ${eq.emoji} ${eq.name}`, W/2, 68, 18, "#90ff90", "center");
+
+    const cardW=200, gap=16, defaultW=150;
+    const shopSkins = SKINS.filter(s=>s.id!=="default");
+    const startX = defaultW + 40;
+
+    shopSkins.forEach((skin, i) => {
+      const cx = startX + i*(cardW+gap), cy = 120;
+      const owned = save.owned.includes(skin.id);
+      const equipped = save.equipped === skin.id;
+      ctx.fillStyle = equipped ? "#2a4030" : owned ? "#283040" : "#282030";
+      roundRect(ctx, cx, cy, cardW, 300, 12); ctx.fill();
+      ctx.strokeStyle = equipped ? "#50ff90" : "#ffdc50"; ctx.lineWidth=2;
+      roundRect(ctx, cx, cy, cardW, 300, 12); ctx.stroke();
+
+      drawAvatar(ctx, cx+cardW/2, cy+70, skin, 1.8);
+      drawText(skin.emoji+" "+skin.name, cx+cardW/2, cy+120, 17, "#fff", "center");
+      wrapText(skin.desc, cx+cardW/2, cy+148, cardW-20, 13, "#aaa");
+
+      let label, col;
+      if (equipped) { label="✅ EQUIPADA — la llevas en el juego"; col="#50ff90"; }
+      else if (owned) { label="👕 EQUIPAR — clic aquí"; col="#e8dcc8"; }
+      else if (save.coins>=skin.price) { label=`🪙 ${skin.price} — COMPRAR y equipar`; col="#ffdc50"; }
+      else { label=`🪙 ${skin.price} (faltan ${skin.price-save.coins})`; col="#c85050"; }
+      drawText(label, cx+cardW/2, cy+255, 14, col, "center");
+    });
+
+    // Explorador gratis
+    const fx = 24, fy = 120;
+    const eq0 = save.equipped === "default";
+    ctx.fillStyle = eq0 ? "#2a4030" : "#282030";
+    roundRect(ctx, fx, fy, 150, 300, 12); ctx.fill();
+    ctx.strokeStyle = eq0 ? "#50ff90" : "#666"; ctx.lineWidth=2;
+    roundRect(ctx, fx, fy, 150, 300, 12); ctx.stroke();
+    drawAvatar(ctx, fx+75, fy+70, SKINS[0], 1.6);
+    drawText("🧭 Explorador", fx+75, fy+120, 16, "#fff", "center");
+    drawText("Gratis — skin inicial", fx+75, fy+148, 13, "#aaa", "center");
+    drawText(eq0 ? "✅ EQUIPADA" : "👕 EQUIPAR", fx+75, fy+255, 14, eq0?"#50ff90":"#e8dcc8", "center");
+
+    if (shopMsgT>0) {
+      ctx.fillStyle="rgba(0,0,0,0.7)"; ctx.fillRect(80, H-130, W-160, 44);
+      drawText(shopMsg, W/2, H-118, 20, "#fff", "center");
+    }
+    drawText("Compra y equipa — ¡tu avatar aparecerá en el laberinto!", W/2, 95, 15, "#888", "center");
+    drawButtons();
+  }
+
+  function drawMaze() {
+    ctx.fillStyle="#191420"; ctx.fillRect(0,0,W,HUD_H);
+    drawText(`⭐ Nivel ${level}   🪙 ${save.coins}`, 16, 12, 20, "#fff");
+    const eq = getSkin(save.equipped);
+    drawText(`${eq.emoji} ${eq.name}`, W-16, 12, 18, "#ffdc50", "right");
+    drawText("WASD mover · ESC pausa", W/2, 14, 14, "#888", "center");
+
+    ctx.fillStyle="#8c7850";
+    ctx.fillRect(0, HUD_H, VIEW_W, VIEW_H);
+
+    for (let y=0;y<maze.rows;y++) for (let x=0;x<maze.cols;x++) {
+      if (maze.grid[y][x]!==0) continue;
+      const px = x*CELL-camX, py = y*CELL-camY+HUD_H;
+      if (px+CELL<0||py+CELL<HUD_H||px>VIEW_W||py>H) continue;
+      ctx.fillStyle = (x+y)%2 ? "#c8b878" : "#dcc896";
+      ctx.fillRect(px, py, CELL, CELL);
+      ctx.strokeStyle="#a08850"; ctx.strokeRect(px, py, CELL, CELL);
+    }
+
+    const [ex,ey] = maze.exit;
+    const erx = ex*CELL-camX, ery = ey*CELL-camY+HUD_H;
+    ctx.fillStyle="#3cc864"; ctx.fillRect(erx, ery, CELL, CELL);
+    drawText("🚪 SALIDA", erx+CELL/2, ery+12, 13, "#184020", "center");
+
+    const skin = getSkin(save.equipped);
+    const [ppx, ppy] = gridPixel(player.x, player.y);
+    drawAvatar(ctx, ppx-camX, ppy-camY+HUD_H, skin, 1.1);
+
+    monsters.forEach(m => {
+      const [mx,my] = gridPixel(m.x, m.y);
+      const bob = Math.sin(pulseT*6+m.x)*2;
+      drawAvatar(ctx, mx-camX, my-camY+HUD_H+bob, skin, 1.1, true);
+    });
+
+    if (flickerA>0) {
+      ctx.fillStyle=`rgba(255,240,180,${flickerA/255})`;
+      ctx.fillRect(0, HUD_H, VIEW_W, VIEW_H);
+    }
+
+    const near = Math.min(...monsters.map(m=>Math.hypot(player.x-m.x,player.y-m.y)));
+    if (near<5 && state===STATE.PLAY) {
+      const a = 0.2+0.15*Math.sin(pulseT*10);
+      ctx.strokeStyle=`rgba(255,40,40,${a})`; ctx.lineWidth=10;
+      ctx.strokeRect(5, HUD_H+5, VIEW_W-10, VIEW_H-10);
+    }
+
+    drawMinimap();
+    confetti.forEach(p => {
+      ctx.fillStyle=p.c; ctx.fillRect(p.x, p.y, 6, 6);
+    });
+  }
+
+  function drawMinimap() {
+    const mw=150, mh=110, mx=W-mw-10, my=H-mh-10;
+    ctx.fillStyle="#1a1420"; ctx.fillRect(mx,my,mw,mh);
+    const sx=mw/maze.cols, sy=mh/maze.rows;
+    for (let y=0;y<maze.rows;y++) for (let x=0;x<maze.cols;x++) {
+      if (maze.grid[y][x]===0) {
+        ctx.fillStyle=(x+y)%2?"#c8b878":"#dcc896";
+        ctx.fillRect(mx+x*sx, my+y*sy, sx+1, sy+1);
+      }
+    }
+    ctx.fillStyle="#3cc864";
+    ctx.fillRect(mx+maze.exit[0]*sx, my+maze.exit[1]*sy, sx*2, sy*2);
+    monsters.forEach(m => {
+      ctx.fillStyle="#c82828";
+      ctx.beginPath(); ctx.arc(mx+m.x*sx, my+m.y*sy, 3, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.fillStyle="#50a0ff";
+    ctx.beginPath(); ctx.arc(mx+player.x*sx, my+player.y*sy, 3, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle="#ffdc50"; ctx.strokeRect(mx,my,mw,mh);
+    drawText("MAPA", mx+mw/2, my-16, 12, "#ffdc50", "center");
+  }
+
+  function drawDice() {
+    drawMaze();
+    ctx.fillStyle="rgba(0,0,0,0.75)"; ctx.fillRect(0,0,W,H);
+    if (dice.phase===0) {
+      drawText("👹 ¡MONSTRUO!", W/2, H/2-70, 48, "#c82828", "center");
+      drawText("Tirando el dado mágico...", W/2, H/2-20, 24, "#fff", "center");
+    } else {
+      const size=90, dx=W/2-size/2, dy=H/2-size/2-20;
+      const ang = dice.phase===1 && dice.timer<1.5 ? Math.sin(dice.timer*20)*0.2 : 0;
+      ctx.save();
+      ctx.translate(W/2, H/2-20); ctx.rotate(ang);
+      ctx.fillStyle="#f5f0e8"; roundRect(ctx,-size/2,-size/2,size,size,12); ctx.fill();
+      ctx.strokeStyle="#ffdc50"; ctx.lineWidth=3; roundRect(ctx,-size/2,-size/2,size,size,12); ctx.stroke();
+      const pips = {1:[[0,0]],2:[[-1,-1],[1,1]],3:[[-1,-1],[0,0],[1,1]],4:[[-1,-1],[1,-1],[-1,1],[1,1]],
+        5:[[-1,-1],[1,-1],[0,0],[-1,1],[1,1]],6:[[-1,-1],[1,-1],[-1,0],[1,0],[-1,1],[1,1]]};
+      ctx.fillStyle="#282830";
+      (pips[dice.display]||[]).forEach(([ox,oy]) => {
+        ctx.beginPath(); ctx.arc(ox*20, oy*20, 8, 0, Math.PI*2); ctx.fill();
+      });
+      ctx.restore();
+      const hints = {1:"1 — ¡Oh no! (0%)",2:"2 — ¡Oh no! (0%)",3:"3 — 50% suerte",4:"4 — 50% suerte",5:"5 — ¡Escape!",6:"6 — ¡Escape total!"};
+      if (dice.phase>=1) drawText(hints[dice.display]||"", W/2, H/2+60, 20, "#fff", "center");
+      if (dice.phase===2) {
+        drawText(dice.result ? "🎉 ¡Lo esquivaste!" : "💀 No tuviste suerte...", W/2, H/2+95, 24,
+          dice.result ? "#50ff90" : "#ff5050", "center");
+      }
+    }
+  }
+
+  function drawPause() {
+    drawMaze();
+    ctx.fillStyle="rgba(0,0,0,0.7)"; ctx.fillRect(0,0,W,H);
+    drawText("⏸ PAUSA", W/2, 200, 48, "#ffdc50", "center");
+    drawButtons();
+  }
+
+  function drawWin() {
+    drawMaze();
+    ctx.fillStyle="rgba(0,60,20,0.8)"; ctx.fillRect(0,0,W,H);
+    drawText("🎉 CONGRATULATIONS!", W/2, H/2-50, 48, "#50ff90", "center");
+    drawText(`+${WIN_COINS} monedas — ¡Ve a la tienda!`, W/2, H/2+10, 28, "#ffdc50", "center");
+    drawButtons();
+  }
+
+  function drawOver() {
+    drawMaze();
+    ctx.fillStyle=`rgba(120,0,0,${Math.min(0.85,0.4+endT*0.2)})`; ctx.fillRect(0,0,W,H);
+    blood.forEach(b => { ctx.fillStyle="#a01010"; ctx.beginPath(); ctx.arc(b.x,b.y,5,0,Math.PI*2); ctx.fill(); });
+    drawText("GAME OVER", W/2, H/2-30, 56, "#ff4040", "center");
+    drawText("¡Inténtalo otra vez, tú puedes!", W/2, H/2+25, 22, "#fff", "center");
+    drawButtons();
+  }
+
+  function drawButtons() {
+    buttons.forEach(b => {
+      ctx.fillStyle = b.hover ? "#6a5090" : "#4a3870";
+      roundRect(ctx, b.x, b.y, b.w, b.h, 12); ctx.fill();
+      ctx.strokeStyle="#ffdc50"; ctx.lineWidth=2;
+      roundRect(ctx, b.x, b.y, b.w, b.h, 12); ctx.stroke();
+      drawText(b.label, b.x+b.w/2, b.y+b.h/2-10, b.fs, "#fff", "center");
+    });
+  }
+
+  function render() {
+    switch(state) {
+      case STATE.INTRO: drawIntro(); break;
+      case STATE.MENU: drawMenu(); break;
+      case STATE.SHOP: drawShop(); break;
+      case STATE.PLAY: drawMaze(); break;
+      case STATE.DICE: drawDice(); break;
+      case STATE.PAUSE: drawPause(); break;
+      case STATE.WIN: drawWin(); break;
+      case STATE.OVER: drawOver(); break;
+    }
+  }
+
+  function loop(now) {
+    const dt = Math.min(0.05, (now-last)/1000);
+    last = now;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ── Self-test ──
+  function selfTest() {
+    const m = new Maze(11,9);
+    const p = { x:1.5, y:1.5, speed:3.8 };
+    for (let i=0;i<100;i++) moveEnt(m, p, Math.random()-0.5, Math.random()-0.5, 0.05);
+    console.assert(m.walkable(Math.floor(p.x), Math.floor(p.y)), "player in wall");
+    console.assert(getSkin(save.equipped), "skin exists");
+    console.log("✅ Backrooms web self-test OK");
+  }
+  selfTest();
+
+  requestAnimationFrame(loop);
+})();
+  </script>
+</body>
+</html>
